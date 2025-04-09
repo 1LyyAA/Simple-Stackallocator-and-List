@@ -111,50 +111,91 @@ class List{
     using NodeAlloc = typename std::allocator_traits<Alloc>::template rebind_alloc<Node>;
     using NodeAllocator_traits = std::allocator_traits<NodeAlloc>;
 
-    NodeAlloc alloc_;
-    BaseNode fakeNode;
-    size_t sz = 0;
+    // внутренняя реализация листа
+    class list_impl : public NodeAlloc{
+        BaseNode fakeNode;
+        size_t sz = 0;
+        friend class List;
 
-    template<typename... Args>
-    Node* createNode(Args&&... args){
-        Node* node = NodeAllocator_traits::allocate(alloc_, 1);
-        try{
-            NodeAllocator_traits::construct(alloc_, &(node->value), std::forward<Args>(args)...);
-        } catch(...) {
-            NodeAllocator_traits::deallocate(alloc_, node, 1);
-            throw;
+        template<typename... Args>
+        Node* createNode(Args&&... args){
+            Node* node = NodeAllocator_traits::allocate((*this), 1);
+            try{
+                NodeAllocator_traits::construct((*this), &(node->value), std::forward<Args>(args)...);
+            } catch(...) {
+                NodeAllocator_traits::deallocate((*this), node, 1);
+                throw;
+            }
+            return node;
         }
-        return node;
-    }
 
-    Node* createNode(){
-        Node* node = NodeAllocator_traits::allocate(alloc_, 1);
-        try{
-            NodeAllocator_traits::construct(alloc_, &(node->value));
-        } catch(...) {
-            NodeAllocator_traits::deallocate(alloc_, node, 1);
-            throw;
+        Node* createNode(){
+            Node* node = NodeAllocator_traits::allocate((*this), 1);
+            try{
+                NodeAllocator_traits::construct((*this), &(node->value));
+            } catch(...) {
+                NodeAllocator_traits::deallocate((*this), node, 1);
+                throw;
+            }
+            return node;
         }
-        return node;
-    }
+
+        void destroyNode(Node* node){
+            NodeAllocator_traits::destroy((*this), &(static_cast<Node*>(node)->value));
+            NodeAllocator_traits::deallocate((*this), node, 1);
+        }
+
+        void fork(BaseNode* node_to_fork, BaseNode* node){
+            node_to_fork->prev = node->prev;
+            node_to_fork->next = node;
     
-    void destroyNode(Node* node){
-        NodeAllocator_traits::destroy(alloc_, &(static_cast<Node*>(node)->value));
-        NodeAllocator_traits::deallocate(alloc_, node, 1);
-    }
+            node->prev = node_to_fork;
+            node_to_fork->prev->next = node_to_fork;
+        }
+        
+        void unfork(BaseNode* node){
+            node->prev->next = node->next;
+            node->next->prev = node->prev;
+        }
 
-    void fork(BaseNode* node_to_fork, BaseNode* node){
-        node_to_fork->prev = node->prev;
-        node_to_fork->next = node;
+        explicit list_impl(const Alloc& alloc) :  NodeAlloc(alloc) {
+            fakeNode = {&fakeNode, &fakeNode};
+        }
+        list_impl() : list_impl(Alloc()){}
 
-        node->prev = node_to_fork;
-        node_to_fork->prev->next = node_to_fork;
-    }
+        explicit list_impl(size_t count, const Alloc& alloc = Alloc()) : list_impl(alloc){
+            for(size_t i = 0; i < count; ++i){
+                Node* node = createNode();
+                fork(node, &fakeNode);
+            }
+            sz = count;
+        }
 
-    void unfork(BaseNode* node){
-        node->prev->next = node->next;
-        node->next->prev = node->prev;
-    }
+        explicit list_impl(size_t count, const T& value, const Alloc& alloc = Alloc()) : list_impl(alloc){
+            for(size_t i = 0; i < count; ++i){
+                Node* node = createNode(value);
+                fork(node, &fakeNode);
+            }
+            sz = count;
+        }
+
+        void swap(list_impl& other) {
+            fakeNode.swap(other.fakeNode);
+            std::swap(sz, other.sz);
+            std::swap(static_cast<NodeAlloc&>(*this), static_cast<NodeAlloc&>(other));
+        }
+
+        ~list_impl(){
+            while ((&fakeNode != fakeNode.next) && (&fakeNode != fakeNode.prev))
+            {
+                Node* node = static_cast<Node*>(fakeNode.prev);
+                unfork(node);
+                destroyNode(node);
+            } 
+        }
+    };
+
+    list_impl list;
 
     template <bool IsConst>
     class base_iterator{
@@ -214,89 +255,31 @@ class List{
     public:
     using iterator = base_iterator<false>;
     using const_iterator = base_iterator<true>;
-
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
-    explicit List(const Alloc& alloc) :  alloc_(alloc), fakeNode{&fakeNode, &fakeNode}{}
-    List() : List(Alloc()){}
-
-    explicit List(size_t count, const Alloc& alloc = Alloc()) : List(alloc){
-        for(size_t i = 0; i < count; ++i){
-            Node* node = createNode();
-            fork(node, &fakeNode);
-        }
-        sz = count;
-    }
-
-    explicit List(size_t count, const T& value, const Alloc& alloc = Alloc()) : List(alloc){
-        for(size_t i = 0; i < count; ++i){
-            Node* node = createNode(value);
-            fork(node, &fakeNode);
-        }
-        sz = count;
-    }
-
-    void swap(List& other) {
-        fakeNode.swap(other.fakeNode);
-        std::swap(sz, other.sz);
-        std::swap(alloc_, other.alloc_);
-    }
-
-    List(const List& other) : List(std::allocator_traits<Alloc>::select_on_container_copy_construction(other.alloc_)){
-        for (auto& x : other){
-            push_back(x);
-        }
-    }
-
-    List& operator=(const List& other){
-        if (this == &other) return *this;
-        
-        if (std::allocator_traits<Alloc>::propagate_on_container_copy_assignment::value)
-        {
-            List tmp(other.alloc_);
-            swap(tmp);
-        }
-
-        auto it = begin();
-        auto it2 = other.begin();
-
-        for(; it != end() && it2 != other.end(); ++it, ++it2){
-            *it = *it2;
-        }
-            
-        for(; it2 != other.end(); ++it2){
-            push_back(*it2);
-        }
-
-        for(; sz > other.sz;){
-            pop_back();
-        }
-        return *this;
-    }
-
     iterator begin(){
-        return{fakeNode.next};
+        return{list.fakeNode.next};
     }
 
     const_iterator begin()const{
-        return{fakeNode.next};
+        return{list.fakeNode.next};
     }
 
     const_iterator cbegin()const{
-        return{fakeNode.next};
+        return{list.fakeNode.next};
     }
 
     iterator end(){
-        return{&fakeNode};
+        return{&list.fakeNode};
     }
 
     const_iterator end()const{
-        return{&fakeNode};
+        return{&list.fakeNode};
     }
 
     const_iterator cend()const{
-        return{&fakeNode};
+        return{&list.fakeNode};
     }
 
     reverse_iterator rbegin() { 
@@ -323,66 +306,96 @@ class List{
         return const_reverse_iterator(begin()); 
     }
 
+    public:
+    explicit List(const Alloc& alloc) : list(alloc){}
+    List() : List(Alloc()){}
+
+    explicit List(size_t count, const Alloc& alloc = Alloc()) : list(count, alloc){}
+
+    explicit List(size_t count, const T& value, const Alloc& alloc = Alloc()) : list(count, value, alloc){}
+
+    List(const List& other) : list(std::allocator_traits<Alloc>::select_on_container_copy_construction(static_cast<const NodeAlloc&>(other.list))){
+        for (auto& x : other){
+            push_back(x);
+        }
+    }
+
+    List& operator=(const List& other){
+        if (this == &other) return *this;
+        
+        if (std::allocator_traits<NodeAlloc>::propagate_on_container_copy_assignment::value)
+        {
+            List tmp(static_cast<NodeAlloc>(other.list));
+            list.swap(tmp.list);
+        }
+
+        auto it = begin();
+        auto it2 = other.begin();
+
+        for(; it != end() && it2 != other.end(); ++it, ++it2){
+            *it = *it2;
+        }
+            
+        for(; it2 != other.end(); ++it2){
+            push_back(*it2);
+        }
+
+        for(; list.sz > other.list.sz;){
+            pop_back();
+        }
+        return *this;
+    }
+
+    void push_back(const T& value){
+        Node* node = list.createNode(value);
+        list.fork(node, &list.fakeNode);
+        ++list.sz;
+    }
+
+    void pop_back(){
+        Node* node = static_cast<Node*>(list.fakeNode.prev);
+        list.unfork(node);
+        list.destroyNode(node);
+        --list.sz;
+    }
+
+    void push_front(const T& value){
+        Node* node = list.createNode(value);
+        list.fork(node, list.fakeNode.next);
+        ++list.sz;
+    }
+
+    void pop_front(){
+        Node* node = static_cast<Node*>(list.fakeNode.next);
+        list.unfork(node);
+        list.destroyNode(node);
+        --list.sz;
+    }
+
     iterator insert (const_iterator pos, const T& value){
-        Node* node  = createNode(value);
-        fork(node, pos.iterator_node);
-        ++sz;
+        Node* node  = list.createNode(value);
+        list.fork(node, pos.iterator_node);
+        ++list.sz;
         return {node};
     }
 
     iterator erase (const_iterator pos){
         BaseNode* node = pos.iterator_node->next;
-        unfork(pos.iterator_node);
-        destroyNode(static_cast<Node*>(pos.iterator_node));
-        --sz;
+        list.unfork(pos.iterator_node);
+        list.destroyNode(static_cast<Node*>(pos.iterator_node));
+        --list.sz;
         return {node};
-    }
-    
-
-    void push_back(const T& value){
-        Node* node = createNode(value);
-        fork(node, &fakeNode);
-        ++sz;
-    }
-
-    void pop_back(){
-        Node* node = static_cast<Node*>(fakeNode.prev);
-        unfork(node);
-        destroyNode(node);
-        --sz;
-    }
-
-    void push_front(const T& value){
-        Node* node = createNode(value);
-        fork(node, fakeNode.next);
-        ++sz;
-    }
-
-    void pop_front(){
-        Node* node = static_cast<Node*>(fakeNode.next);
-        unfork(node);
-        destroyNode(node);
-        --sz;
     }
 
     allocator_type get_allocator()const{
-        return this->alloc_;
+        return static_cast<const NodeAlloc&>(list);
     }
 
     size_t size()const{
-        return sz;
+        return list.sz;
     }
 
     bool empty(){
-        return (sz==0);
-    }
-
-    ~List(){
-        while ((&fakeNode != fakeNode.next) && (&fakeNode != fakeNode.prev))
-        {
-            Node* node = static_cast<Node*>(fakeNode.prev);
-            unfork(node);
-            destroyNode(node);
-        } 
+        return (list.sz==0);
     }
 };
