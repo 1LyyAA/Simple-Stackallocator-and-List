@@ -102,7 +102,6 @@ class List{
             }
         }
     };
-
     struct Node : BaseNode{
         T value;
     };
@@ -308,7 +307,7 @@ class List{
             push_back(x);
         }
     }
-
+    
     List(List&& other) : list(other.get_allocator()){
         list.swap(other.list);
     }
