@@ -320,6 +320,10 @@ class List{
         }
     }
 
+    List(List&& other) : list(other.get_allocator()){
+        list.swap(other.list);
+    }
+
     List& operator=(const List& other){
         if (this == &other) return *this;
         
@@ -346,8 +350,15 @@ class List{
         return *this;
     }
 
-    void push_back(const T& value){
-        Node* node = list.createNode(value);
+    List& operator=(List&& other){
+        List tmp(std::move(other));
+        list.swap(tmp.list);
+        return *this;
+    }
+
+    template <typename U>
+    void push_back(U&& value){
+        Node* node = list.createNode(std::forward<U>(value));
         list.fork(node, &list.fakeNode);
         ++list.sz;
     }
@@ -359,8 +370,9 @@ class List{
         --list.sz;
     }
 
-    void push_front(const T& value){
-        Node* node = list.createNode(value);
+    template<typename U>
+    void push_front(U&& value){
+        Node* node = list.createNode(std::forward<U>(value));
         list.fork(node, list.fakeNode.next);
         ++list.sz;
     }
@@ -372,8 +384,9 @@ class List{
         --list.sz;
     }
 
-    iterator insert (const_iterator pos, const T& value){
-        Node* node  = list.createNode(value);
+    template<typename U>
+    iterator insert (const_iterator pos, U&& value){
+        Node* node  = list.createNode(std::forward<U>(value));
         list.fork(node, pos.iterator_node);
         ++list.sz;
         return {node};
