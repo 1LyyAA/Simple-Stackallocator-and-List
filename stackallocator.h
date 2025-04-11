@@ -129,17 +129,6 @@ class List{
             return node;
         }
 
-        Node* createNode(){
-            Node* node = NodeAllocator_traits::allocate((*this), 1);
-            try{
-                NodeAllocator_traits::construct((*this), &(node->value));
-            } catch(...) {
-                NodeAllocator_traits::deallocate((*this), node, 1);
-                throw;
-            }
-            return node;
-        }
-
         void destroyNode(Node* node){
             NodeAllocator_traits::destroy((*this), &(static_cast<Node*>(node)->value));
             NodeAllocator_traits::deallocate((*this), node, 1);
@@ -329,7 +318,7 @@ class List{
         
         if (std::allocator_traits<NodeAlloc>::propagate_on_container_copy_assignment::value)
         {
-            List tmp(static_cast<NodeAlloc>(other.list));
+            List tmp(other.get_allocator());
             list.swap(tmp.list);
         }
 
@@ -351,6 +340,7 @@ class List{
     }
 
     List& operator=(List&& other){
+        if(*this == other) return *this;
         List tmp(std::move(other));
         list.swap(tmp.list);
         return *this;
@@ -401,14 +391,16 @@ class List{
     }
 
     allocator_type get_allocator()const{
-        return static_cast<const NodeAlloc&>(list);
+        return static_cast<NodeAlloc>(list);
     }
 
     size_t size()const{
         return list.sz;
     }
 
-    bool empty(){
+    bool empty()const{
         return (list.sz==0);
     }
 };
+
+
