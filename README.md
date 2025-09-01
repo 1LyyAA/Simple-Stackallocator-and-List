@@ -1,1 +1,1 @@
-Simple Implementation of StackAllocator and std::list
+Simple Implementation of std::list with StackAllocator
